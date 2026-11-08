@@ -199,7 +199,7 @@ local function freshState(c)
     coldPressure = c.designPressure, -- gauge Pa at fitting temperature
     fitTemp = t,
     pressure = c.designPressure,
-    appliedPressure = nil,
+    appliedRatio = nil,
     distance = 0,               -- metres since fitted (scrub-in)
     heatCycles = 0,
     wasHot = false,
@@ -238,21 +238,30 @@ local function setGrip(index, c, multiplier, force)
   c.appliedGrip = not useStock and multiplier or nil
 end
 
+-- obj:setGroupPressureRel takes a RATIO of the tyre's JBeam pressure (1 = stock), not pascals.
+-- The ratio is clamped hard so a bad value can never over-inflate (and burst) a tyre.
+local PRESSURE_RATIO_MIN, PRESSURE_RATIO_MAX = 0.3, 1.4
+
+local function setPressureRatio(c, ratio)
+  ratio = clamp(tonumber(ratio) or 1, PRESSURE_RATIO_MIN, PRESSURE_RATIO_MAX)
+  return pcall(obj.setGroupPressureRel, obj, c.pressureGroupId, ratio)
+end
+
 local function applyPressure(c, s, rotator)
   if not (ctx.applyPressure and ctx.pressure and c.hasRealPressure and c.pressureGroupId) then return end
   if s.flat or rotator.isTireDeflated or rotator.isBroken then return end
-  if s.appliedPressure and abs(s.appliedPressure - s.pressure) < 1500 then return end
-  local ok = pcall(obj.setGroupPressureRel, obj, c.pressureGroupId, max(0, s.pressure))
-  if ok then s.appliedPressure = s.pressure else c.hasRealPressure = false end
+  local ratio = clamp(s.pressure / c.designPressure, PRESSURE_RATIO_MIN, PRESSURE_RATIO_MAX)
+  if s.appliedRatio and abs(s.appliedRatio - ratio) < 0.01 then return end
+  if setPressureRatio(c, ratio) then s.appliedRatio = ratio else c.hasRealPressure = false end
 end
 
 local function restoreAll()
   for index, c in pairs(wheelCache) do
     setGrip(index, c, nil, true)
     local s = wheelState[index]
-    if s and c.hasRealPressure and c.pressureGroupId and not s.flat and s.appliedPressure then
-      pcall(obj.setGroupPressureRel, obj, c.pressureGroupId, c.designPressure)
-      s.appliedPressure = nil
+    if s and c.hasRealPressure and c.pressureGroupId and not s.flat and s.appliedRatio then
+      setPressureRatio(c, 1)
+      s.appliedRatio = nil
     end
   end
   gripApplied = false
@@ -546,9 +555,9 @@ function M.setContext(newCtx)
   if not ctx.pressure or not ctx.applyPressure then
     for index, c in pairs(wheelCache) do
       local s = wheelState[index]
-      if s and s.appliedPressure and c.pressureGroupId and not s.flat then
-        pcall(obj.setGroupPressureRel, obj, c.pressureGroupId, c.designPressure)
-        s.appliedPressure = nil
+      if s and s.appliedRatio and c.pressureGroupId and not s.flat then
+        setPressureRatio(c, 1)
+        s.appliedRatio = nil
       end
     end
   end
@@ -671,7 +680,7 @@ function M.onReset()
     if s then
       s.flat = false
       s.flatReason = nil
-      s.appliedPressure = nil
+      s.appliedRatio = nil
       s.zones = {ctx.ambient, ctx.ambient, ctx.ambient}
       s.core = ctx.ambient
       s.fitTemp = ctx.ambient
