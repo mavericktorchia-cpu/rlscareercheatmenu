@@ -1,0 +1,21 @@
+{
+  "name": "RLS Cheat Menu",
+  "description": "Cheat menu for RLS Career Overhaul: money, BeamXP, vouchers, skills, reputation, loans, free repairs, refuel, police, driver score and time of day.",
+  "author": "mavericktorchia",
+  "version": "1.0.0",
+  "directive": "rlsCheatMenu",
+  "domElement": "<rls-cheat-menu></rls-cheat-menu>",
+  "types": [
+    "ui.apps.categories.debug",
+    "ui.apps.categories.info"
+  ],
+  "css": {
+    "top": "80px",
+    "left": "20px",
+    "width": "360px",
+    "height": "520px",
+    "min-width": "300px",
+    "min-height": "260px"
+  },
+  "interactive": "yes"
+}
