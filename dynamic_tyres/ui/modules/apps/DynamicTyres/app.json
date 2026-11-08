@@ -1,0 +1,21 @@
+{
+  "name": "Dynamic Tyres",
+  "description": "Live tyre temperature (inner/middle/outer and carcass), tread, pressure and grip for every wheel, with settings for the Dynamic Tyres simulation.",
+  "author": "mavericktorchia",
+  "version": "1.0.0",
+  "directive": "dynamicTyres",
+  "domElement": "<dynamic-tyres></dynamic-tyres>",
+  "types": [
+    "ui.apps.categories.vehicle_info",
+    "ui.apps.categories.racing"
+  ],
+  "css": {
+    "top": "80px",
+    "right": "20px",
+    "width": "380px",
+    "height": "470px",
+    "min-width": "300px",
+    "min-height": "260px"
+  },
+  "interactive": "yes"
+}

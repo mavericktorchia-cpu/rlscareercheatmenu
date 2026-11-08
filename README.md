@@ -34,3 +34,9 @@ Every change goes through RLS's own systems (the money ledger, attributes, the i
 - Free repair only works on vehicles you own. In any other vehicle it does a plain physics reset.
 - RLS's weather system may move the clock on after you set the time.
 - Back up your save before using cheats.
+
+---
+
+## Also in this repo: Dynamic Tyres
+
+[`dynamic_tyres/`](dynamic_tyres/) is a separate standalone mod for dynamic tyre temperature, wear, pressure and wet grip, with its own UI app. See its [README](dynamic_tyres/README.md).
