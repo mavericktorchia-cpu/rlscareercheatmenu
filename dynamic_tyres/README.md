@@ -11,7 +11,9 @@ It works on its own in freeroam, scenarios and any career, and doesn't need RLS 
 | **Temperature** | Each tyre has three tread zones (inner, middle and outer) plus the carcass. Sliding, rolling flex and brake heat warm them; airflow, rain and water cool them. Every compound has a grip window: cold slicks are slippery, road tyres barely care, and overheated tyres lose grip and wear fast. |
 | **Wear** | Tread is lost with distance and with real sliding (burnouts, slides, lock-ups). It goes faster when the tyre is overheated or at the wrong pressure, and on gravel and sand. Bald tyres lose a lot of grip and puncture. |
 | **Pressure** | Hot tyres gain pressure (gas law). The pressure is applied to the physics tyre, so it changes how the car rides as well as how it grips. Under-inflation heats the shoulders; over-inflation heats the middle and shrinks the contact patch. You can adjust the front and rear cold pressure in the app. |
-| **Surface and wet** | The compound is detected from the tyre part (slick, sport, road, all-terrain, mud-terrain or winter). Each compound grips differently on tarmac, dirt, mud, sand, grass, snow and ice. Rain wets the road over time and it dries out afterwards. Worn tread clears less water, and at speed you aquaplane. |
+| **Surface and wet** | The tyre type is detected from the tyre part (slick, sport, road, all-terrain, mud-terrain or winter), or you can pick it per axle in the app. Each type grips differently on tarmac, dirt, mud, sand, grass, snow and ice. Rain wets the road over time and it dries out afterwards. Worn tread clears less water. |
+| **Aquaplaning** | Standing water is patchy, and each side of the car runs through its own puddles. In deep water it starts around 95 km/h on new road tyres and around 65 km/h on bald ones. Partial aquaplaning (light, vague steering) starts about 20% below that. A fully aquaplaning tyre keeps only about 7% of its wet grip, so one side letting go yanks the car. |
+| **Snow and ice** | In Auto mode, falling snow settles on the roads below about 2°C. Wet roads freeze into ice below 0°C, rain below freezing becomes freezing rain, and everything thaws back into water above 0°C. Snow leaves road tyres about 45% of their grip and winter tyres about 72%; ice leaves road tyres about 15%, winter tyres about 32% and slicks about 10%. You can also force Snow, Ice or Black ice. |
 | **Extras** | New tyres need about 1.5 km to scrub in. Slicks and sport tyres lose a little peak grip with each heat cycle. Locking the wheels causes flat spots. Worn-through and overheated tyres can puncture or blow out. |
 
 Every effect can be switched off on its own. Grip effect, heat rate and wear rate each have a slider.
@@ -26,7 +28,11 @@ Every effect can be switched off on its own. Grip effect, heat rate and wear rat
 
 - **Wheel view:** colour-coded tread zone temperatures (blue is cold, green is in the window, red is overheated), plus core temperature, pressure, tread and total grip, with warnings for flats, aquaplaning, flat spots and exposed cords.
 - **≡ view:** a breakdown of grip into temperature, wear, pressure, surface, wet and extras, plus distance and heat cycles.
-- **⚙ view:** all the settings, road wetness (auto from rain, or dry/damp/wet/soaked), ambient temperature, units (°C/°F, psi/kPa/bar), and the current-vehicle tools: fit new tyres, tyre warmers and pressure adjustment.
+- **⚙ view:** all the settings, plus:
+  - **Road:** Auto (follows the weather), Dry, Damp, Wet, Soaked, Snow, Ice or Black ice.
+  - **Snowfall:** Off, Light or Heavy. This spawns falling snow if the level has a snow effect, and keeps the temperature below freezing so the snow settles. Without a snow effect, snow still builds up on the roads.
+  - Ambient temperature, and units (°C/°F, psi/kPa/bar).
+  - **Current vehicle:** tyre type per axle (Auto, Slick, Sport, Road, All-terrain, Mud-terrain, Winter), fit new tyres, tyre warmers and pressure adjustment.
 
 Settings are saved to `settings/dynamicTyres.json` in your user folder.
 

@@ -7,7 +7,7 @@
 --     at the wrong pressure;
 --   * pressure: follows the carcass temperature (gas law) and is applied to the physics tyre;
 --   * surface and wet grip: compound vs surface (slick, sport, road, all-terrain, mud, winter),
---     rain wetness, tread drainage and aquaplaning;
+--     rain wetness, tread drainage and aquaplaning, snow cover and ice (incl. black ice);
 --   * extras: scrub-in of new tyres, heat cycling, flat spots from lock-ups, punctures and blowouts.
 --
 -- The result is one grip multiplier per wheel, applied through wheel:setFrictionThermalSensitivity.
@@ -38,6 +38,8 @@ local ctx = {
   enabled = true,
   ambient = 20,           -- deg C
   wetness = 0,            -- 0 dry .. 1 standing water
+  snow = 0,               -- 0 .. 1 snow cover on the road
+  ice = 0,                -- 0 .. 1 ice cover on the road
   temperature = true,
   wear = true,
   pressure = true,
@@ -80,6 +82,19 @@ local SURFACE_INDEX = {}
 for i, name in ipairs(SURFACES) do SURFACE_INDEX[name] = i end
 -- Loose and rough surfaces chew tread faster.
 local SURFACE_WEAR = {paved = 1, dirt = 1.6, mud = 0.8, sand = 1.4, grass = 0.7, snow = 0.5, ice = 0.4}
+
+-- Grip left when a surface is fully covered by weather snow or ice. Unlike SURFACE_GRIP this is an
+-- absolute cut, because BeamNG's road friction does not change when the weather does.
+local COVER_GRIP = {
+  --              snow   ice
+  slick      = {0.25,  0.10},
+  sport      = {0.35,  0.12},
+  road       = {0.45,  0.15},
+  allTerrain = {0.52,  0.16},
+  mud        = {0.50,  0.14},
+  winter     = {0.72,  0.32},
+}
+local COMPOUND_IDS = {slick = true, sport = true, road = true, allTerrain = true, mud = true, winter = true}
 
 -- Vehicle data helpers -------------------------------------------------------------------------------
 
@@ -162,9 +177,15 @@ local function cacheWheel(index, rotator)
   local cfg = wheelConfig(index)
   c = {}
   c.name = tostring(rotator.name or cfg.name or index)
+  do
+    local letters = string.upper(c.name):gsub("%d+", "")
+    local last = string.sub(letters, -1)
+    c.side = (#letters > 1 and (last == "L" or last == "R")) and last or "C"
+  end
   c.radius = tonumber(rotator.radius or cfg.radius) or 0.33
   c.width = tonumber(cfg.tireWidth or rotator.tireWidth) or 0.215
-  c.compoundId = classifyCompound(tirePartName(c.name), cfg)
+  c.detectedCompound = classifyCompound(tirePartName(c.name), cfg)
+  c.compoundId = c.detectedCompound
   c.compound = COMPOUNDS[c.compoundId]
   local size = clamp(c.width / 0.215, 0.6, 2.5) * clamp((c.radius / 0.33) ^ 2, 0.5, 6)
   c.zoneHeatCap = 2200 * size     -- J/K per tread zone
@@ -290,6 +311,27 @@ local function inWater(rotator)
   return (rotator.node1 and obj:inWater(rotator.node1)) or (rotator.node2 and obj:inWater(rotator.node2)) or false
 end
 
+-- Smooth 1D value noise in 0..1 (deterministic per seed), for puddles along the road.
+local function hash(n)
+  local x = math.sin(n * 127.1 + 311.7) * 43758.5453
+  return x - floor(x)
+end
+
+local function valueNoise(x, seed)
+  local i = floor(x)
+  local f = x - i
+  local a, b = hash(i + seed * 57.3), hash(i + 1 + seed * 57.3)
+  return a + (b - a) * smoothstep(f)
+end
+
+-- Water depth multiplier for this wheel (0.3 .. 1.5): patches ~15-40 m long, different per side.
+local function puddleDepth(c, s)
+  local seed = c.side == "L" and 1 or (c.side == "R" and 2 or 3)
+  local d = s.distance
+  local n = valueNoise(d / 25, seed) * 0.65 + valueNoise(d / 9, seed + 10) * 0.35
+  return 0.3 + 1.2 * n
+end
+
 local function puncture(index, s, reason)
   if s.flat then return end
   s.flat = true
@@ -308,7 +350,14 @@ local function simulateWheel(index, rotator, dt, speed, refLoad, braking)
   local surface, wetSpot = "paved", false
   if contact then surface, wetSpot = surfaceOf(rotator.contactMaterialID1) end
   local paved = surface == "paved"
-  local wetness = paved and ctx.wetness or 0
+  -- Weather snow and ice lie on every surface except ones that are already snow or ice materials.
+  local snowCover, iceCover = 0, 0
+  if surface ~= "snow" and surface ~= "ice" then
+    iceCover = paved and ctx.ice or ctx.ice * 0.5
+    snowCover = ctx.snow * (1 - iceCover * 0.5)
+  end
+  -- Water only lies on paved roads, and not where it is frozen or under snow.
+  local wetness = paved and ctx.wetness * (1 - max(snowCover, iceCover)) or 0
   -- Wet-material spots already have lower ground friction; only add a little for tread/aquaplaning.
   if wetSpot then wetness = max(wetness, 0.3) end
 
@@ -358,7 +407,7 @@ local function simulateWheel(index, rotator, dt, speed, refLoad, braking)
     local weights = {w1 / wsum, w2 / wsum, w3 / wsum}
 
     local water = c.inWater and 10 or 1
-    local airCool = (1.5 + 0.5 * (speed ^ 0.8)) * (1 + 2 * wetness) * water -- W/K per zone
+    local airCool = (1.5 + 0.5 * (speed ^ 0.8)) * (1 + 2 * wetness + 3 * snowCover + 2 * iceCover) * water -- W/K per zone
     local conduct = 12                                                       -- W/K zone <-> carcass
     local ambient = ctx.ambient
     local zoneCap = c.zoneHeatCap
@@ -392,7 +441,7 @@ local function simulateWheel(index, rotator, dt, speed, refLoad, braking)
     local pressureWear = 1 + 1.5 * (pressureRatio - 1) ^ 2
     local abrasion = load * max(0, slip - 0.5) * dt                             -- J of real sliding
     local loss = (5e-7 * loadRatio * distance + 4e-8 * abrasion * tempWear)
-               * comp.wear * (SURFACE_WEAR[surface] or 1) * pressureWear * ctx.wearRate
+               * comp.wear * (SURFACE_WEAR[surface] or 1) * (1 - 0.5 * max(snowCover, iceCover)) * pressureWear * ctx.wearRate
     s.tread = max(0, s.tread - loss)
   end
 
@@ -430,24 +479,39 @@ local function simulateWheel(index, rotator, dt, speed, refLoad, braking)
     f.wear = 1
   end
   f.pressure = ctx.pressure and clamp(1 - 0.5 * (pressureRatio - 1) ^ 2, 0.85, 1) or 1
-  local surfaceGrip, wetGrip, aquaplane = 1, 1, 0
+  local surfaceGrip, wetGrip, aquaplane, coverGrip = 1, 1, 0, 1
   if ctx.surface then
+    local cover = COVER_GRIP[c.compoundId]
+    if snowCover > 0 then
+      -- Fresh tread bites into snow; a worn or slick tyre just slides on it.
+      local snowGrip = cover[1] * (c.compoundId == "slick" and 1 or (0.75 + 0.25 * s.tread))
+      coverGrip = coverGrip * (1 - snowCover * (1 - snowGrip))
+    end
+    if iceCover > 0 then
+      coverGrip = coverGrip * (1 - iceCover * (1 - cover[2]))
+    end
     surfaceGrip = SURFACE_GRIP[c.compoundId][SURFACE_INDEX[surface]] or 1
     if wetness > 0 then
       local treadDepth = c.compoundId == "slick" and 0 or s.tread
       -- Tread clears water: new tread keeps most grip, bald tyres lose much more.
       wetGrip = 1 - wetness * comp.wetLoss * (1 + 0.9 * (1 - treadDepth))
-      -- Aquaplaning above a speed set by pressure and how well the tread drains.
-      if wetness > 0.4 then
+      -- Aquaplaning. Standing water is patchy: each side of the car runs through its own puddles,
+      -- so one side can let go before the other and the car snaps instead of floating evenly.
+      local depth = clamp((wetness - 0.3) / 0.7, 0, 1) * puddleDepth(c, s)
+      if depth > 0 then
         local psi = max(s.pressure, 0) / PSI
-        -- ~120 km/h for new road tread at 32 psi, ~80 km/h when bald.
+        -- Onset speed: pressure and tread drainage push it up, deep water pulls it down
+        -- (deep water: ~95 km/h on new road tread at 32 psi, ~65 km/h when bald).
         local vAqua = 4.0 * sqrt(max(psi, 5)) * (1 + 0.45 * comp.drain * treadDepth)
-        aquaplane = smoothstep((speed - vAqua) / (vAqua * 0.3)) * clamp((wetness - 0.4) / 0.6, 0, 1)
-        wetGrip = wetGrip * (1 - 0.7 * aquaplane)
+        vAqua = vAqua * (1.15 - 0.35 * min(depth, 1))
+        -- Partial aquaplaning from 80% of onset (light, vague steering), full by 110%.
+        aquaplane = smoothstep((speed - 0.8 * vAqua) / (0.3 * vAqua)) * clamp(depth * 1.2, 0, 1)
+        -- A fully aquaplaning tyre rides on water: almost nothing is left.
+        wetGrip = wetGrip * (1 - 0.93 * aquaplane)
       end
     end
   end
-  f.surface, f.wet = surfaceGrip, wetGrip
+  f.surface, f.wet, f.snowIce = surfaceGrip, wetGrip, coverGrip
   local extraGrip = 1
   if ctx.extras then
     if s.distance < 1500 then extraGrip = extraGrip * (0.97 + 0.03 * s.distance / 1500) end
@@ -456,9 +520,10 @@ local function simulateWheel(index, rotator, dt, speed, refLoad, braking)
   end
   f.extras = extraGrip
 
-  local raw = f.temperature * f.wear * f.pressure * f.surface * f.wet * f.extras
-  local grip = clamp(1 + (raw - 1) * ctx.gripStrength, 0.25, 1.2)
+  local raw = f.temperature * f.wear * f.pressure * f.surface * f.wet * f.snowIce * f.extras
+  local grip = clamp(1 + (raw - 1) * ctx.gripStrength, 0.06, 1.2)
   s.grip, s.surface, s.wetness, s.aquaplane, s.surfaceTemp = grip, surface, wetness, aquaplane, tSurf
+  s.snowCover, s.iceCover = snowCover, iceCover
 
   setGrip(index, c, grip)
   applyPressure(c, s, rotator)
@@ -480,6 +545,8 @@ local function sendTelemetry()
       list[#list + 1] = {
         name = c.name,
         compound = c.compound.label,
+        compoundId = c.compoundId,
+        compoundForced = c.compoundOverride ~= nil,
         optTemp = c.compound.opt,
         zones = {round(s.zones[1], 1), round(s.zones[2], 1), round(s.zones[3], 1)},
         core = round(s.core, 1),
@@ -492,9 +559,12 @@ local function sendTelemetry()
         factors = {
           temperature = round(s.factors.temperature or 1, 3), wear = round(s.factors.wear or 1, 3),
           pressure = round(s.factors.pressure or 1, 3), surface = round(s.factors.surface or 1, 3),
-          wet = round(s.factors.wet or 1, 3), extras = round(s.factors.extras or 1, 3),
+          wet = round(s.factors.wet or 1, 3), snowIce = round(s.factors.snowIce or 1, 3),
+          extras = round(s.factors.extras or 1, 3),
         },
         surface = s.surface or "paved",
+        snow = round(s.snowCover or 0, 2),
+        ice = round(s.iceCover or 0, 2),
         aquaplane = round(s.aquaplane or 0, 2),
         flatSpot = round(s.flatSpot, 2),
         heatCycles = s.heatCycles,
@@ -510,6 +580,8 @@ local function sendTelemetry()
     yieldedTo = yieldReason,
     ambient = round(ctx.ambient, 1),
     wetness = round(ctx.wetness, 2),
+    snow = round(ctx.snow, 2),
+    ice = round(ctx.ice, 2),
     speed = round(obj:getVelocity():length(), 1),
   })
 end
@@ -543,6 +615,8 @@ function M.setContext(newCtx)
   ctx.wearRate = clamp(tonumber(ctx.wearRate) or 1, 0, 50)
   ctx.ambient = tonumber(ctx.ambient) or 20
   ctx.wetness = clamp(tonumber(ctx.wetness) or 0, 0, 1)
+  ctx.snow = clamp(tonumber(ctx.snow) or 0, 0, 1)
+  ctx.ice = clamp(tonumber(ctx.ice) or 0, 0, 1)
   -- First context after spawn: start tyres at the real ambient temperature instead of 20 C.
   if not M._gotContext then
     M._gotContext = true
@@ -573,6 +647,32 @@ function M.fitNewTyres()
     wheelState[index] = freshState(c)
     wheelState[index].coldPressure = cold
     wheelState[index].flat = wasFlat or false
+  end
+end
+
+-- Fits a tyre type to an axle: axle "front", "rear" or "all"; compoundId one of COMPOUNDS, or
+-- "auto" to go back to the type detected from the tyre part. Changing type fits new tyres there.
+function M.setCompound(axle, compoundId)
+  if compoundId ~= "auto" and not COMPOUND_IDS[compoundId] then return end
+  if not wheels or not wheels.wheelRotators then return end
+  for index, rotator in pairs(wheels.wheelRotators) do
+    local c = cacheWheel(index, rotator)
+    local front = string.upper(string.sub(c.name, 1, 1)) == "F"
+    if axle == "all" or (axle == "front" and front) or (axle == "rear" and not front) then
+      c.compoundOverride = compoundId ~= "auto" and compoundId or nil
+      local newId = c.compoundOverride or c.detectedCompound
+      if newId ~= c.compoundId then
+        c.compoundId = newId
+        c.compound = COMPOUNDS[newId]
+        local old = wheelState[index]
+        wheelState[index] = freshState(c)
+        if old then
+          wheelState[index].coldPressure = old.coldPressure
+          wheelState[index].flat = old.flat
+          wheelState[index].flatReason = old.flatReason
+        end
+      end
+    end
   end
 end
 

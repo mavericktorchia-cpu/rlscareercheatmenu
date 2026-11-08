@@ -69,3 +69,11 @@
 .dyt-slider input { width: 100%; accent-color: var(--dyt-accent); }
 .dyt-slider b { text-align: right; font-variant-numeric: tabular-nums; }
 .dyt button.dyt-warn-btn { border-color: #ef5350; color: #ffb4b6; }
+.dyt-chip-snow { color: #e8f1ff; border-color: rgba(232, 241, 255, 0.6); }
+.dyt-chip-ice { color: #9be7ff; border-color: rgba(155, 231, 255, 0.7); background: rgba(155, 231, 255, 0.12); }
+.dyt-ice { background: #9be7ff; color: #05222c; }
+.dyt-snow { background: #e8f1ff; color: #15202e; }
+.dyt-compound { display: grid; grid-template-columns: 78px 1fr; }
+.dyt-compound span { color: var(--dyt-dim); }
+.dyt select { background: rgba(0, 0, 0, 0.35); color: var(--dyt-text); border: 1px solid var(--dyt-line); border-radius: 6px; padding: 4px 6px; font: inherit; }
+.dyt select option { background: #1b1f27; }

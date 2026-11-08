@@ -40,7 +40,7 @@
       '<div class="dyt-header">' +
         '<span class="dyt-title">Dynamic Tyres</span>' +
         '<span class="dyt-chip" title="Ambient temperature">{{ fmtTemp(data.ambient) }}</span>' +
-        '<span class="dyt-chip" ng-class="{\'dyt-chip-wet\': data.wetness > 0.05}" title="Road wetness">{{ wetLabel(data.wetness) }}</span>' +
+        '<span class="dyt-chip" ng-class="roadClass(data)" title="Road condition">{{ roadLabel(data) }}</span>' +
         '<button class="dyt-icon" ng-class="{active: view === \'details\'}" ng-click="setView(view === \'details\' ? \'wheels\' : \'details\')" title="Grip breakdown">&#x2261;</button>' +
         '<button class="dyt-icon" ng-class="{active: view === \'settings\'}" ng-click="setView(view === \'settings\' ? \'wheels\' : \'settings\')" title="Settings">&#x2699;</button>' +
       '</div>' +
@@ -54,7 +54,7 @@
         '<div class="dyt-axle" ng-repeat="axle in axles track by axle.key">' +
           '<div class="dyt-wheel" ng-repeat="w in axle.wheels track by w.name" ng-class="{\'dyt-flat\': w.flat}">' +
             '<div class="dyt-wheel-head">' +
-              '<b>{{ w.name }}</b><span class="dyt-dim">{{ w.compound }}</span>' +
+              '<b>{{ w.name }}</b><span class="dyt-dim">{{ w.compound }}<span ng-if="w.compoundForced" title="Chosen in settings">*</span></span>' +
               '<span class="dyt-grip" ng-style="{color: gripColor(w.grip)}">{{ (w.grip * 100).toFixed(0) }}%</span>' +
             '</div>' +
             '<div class="dyt-zones">' +
@@ -76,7 +76,10 @@
             '</div>' +
             '<div class="dyt-badges">' +
               '<span class="dyt-badge dyt-bad" ng-if="w.flat">{{ w.flatReason || "FLAT" }}</span>' +
-              '<span class="dyt-badge dyt-warn" ng-if="w.aquaplane > 0.2">AQUAPLANING</span>' +
+              '<span class="dyt-badge dyt-bad" ng-if="w.aquaplane > 0.5">AQUAPLANING</span>' +
+              '<span class="dyt-badge dyt-warn" ng-if="w.aquaplane > 0.1 && w.aquaplane <= 0.5">aquaplaning</span>' +
+              '<span class="dyt-badge dyt-ice" ng-if="w.ice > 0.1">ICE</span>' +
+              '<span class="dyt-badge dyt-snow" ng-if="w.snow > 0.1">SNOW</span>' +
               '<span class="dyt-badge dyt-warn" ng-if="w.flatSpot > 0.15">flat spot {{ (w.flatSpot * 100).toFixed(0) }}%</span>' +
               '<span class="dyt-badge dyt-warn" ng-if="w.tread < 0.1 && !w.flat">CORDS</span>' +
             '</div>' +
@@ -99,10 +102,19 @@
           '<b>{{ fmtSlider(sl, settings[sl.key]) }}</b>' +
         '</div>' +
 
-        '<div class="dyt-section">Road wetness <span class="dyt-dim">now {{ wetLabel(settings.currentWetness) }}<span ng-if="settings.rainIntensity > 0.02">, raining</span></span></div>' +
+        '<div class="dyt-section">Road <span class="dyt-dim">now {{ roadLabel({wetness: settings.currentWetness, snow: settings.currentSnow, ice: settings.currentIce}) }}' +
+          '<span ng-if="settings.rainIntensity > 0.02">, raining</span><span ng-if="settings.snowIntensity > 0.02">, snowing</span></span></div>' +
         '<div class="dyt-row">' +
           '<button ng-repeat="m in wetModes" ng-class="{active: settings.wetMode === m.id}" ng-click="set(\'wetMode\', m.id)">{{ m.label }}</button>' +
         '</div>' +
+        '<div class="dyt-dim dyt-small" ng-if="settings.wetMode === \'auto\'">Auto follows the weather: rain wets the road, snow settles below 2&deg;C, wet roads freeze below 0&deg;C and thaw above it.</div>' +
+
+        '<div class="dyt-section">Snowfall</div>' +
+        '<div class="dyt-row">' +
+          '<button ng-repeat="m in snowModes" ng-class="{active: settings.snowfall === m.id}" ng-click="set(\'snowfall\', m.id)">{{ m.label }}</button>' +
+        '</div>' +
+        '<div class="dyt-dim dyt-small" ng-if="settings.snowfall !== \'off\'">Snowing keeps it below freezing unless you pick an ambient temperature.' +
+          '<span ng-if="!settings.snowEffectAvailable"> This level has no snow effect, so no flakes, but snow still settles on the road.</span></div>' +
 
         '<div class="dyt-section">Ambient temperature <span class="dyt-dim">{{ fmtTemp(settings.currentAmbient) }}</span></div>' +
         '<div class="dyt-row">' +
@@ -111,6 +123,13 @@
         '</div>' +
 
         '<div class="dyt-section">Current vehicle</div>' +
+        '<div class="dyt-row dyt-compound">' +
+          '<span>Front tyres</span><select ng-model="compoundPick.front" ng-change="setCompound(\'front\', compoundPick.front)" ng-options="c.id as c.label for c in compoundOptions"></select>' +
+        '</div>' +
+        '<div class="dyt-row dyt-compound">' +
+          '<span>Rear tyres</span><select ng-model="compoundPick.rear" ng-change="setCompound(\'rear\', compoundPick.rear)" ng-options="c.id as c.label for c in compoundOptions"></select>' +
+        '</div>' +
+        '<div class="dyt-dim dyt-small">Changing type fits a new set on that axle. Auto uses the type of the fitted tyre part.</div>' +
         '<div class="dyt-row">' +
           '<button ng-click="vehicleCall(\'fitNewTyres\')">Fit new tyres</button>' +
           '<button ng-click="vehicleCall(\'warmTyres\')">Tyre warmers</button>' +
@@ -168,14 +187,25 @@
             {key: 'wearRate', label: 'Wear rate', min: 0, max: 20, step: 0.5}
           ];
           scope.wetModes = [
-            {id: 'auto', label: 'Auto (rain)'}, {id: 'dry', label: 'Dry'}, {id: 'damp', label: 'Damp'},
-            {id: 'wet', label: 'Wet'}, {id: 'soaked', label: 'Soaked'}
+            {id: 'auto', label: 'Auto (weather)'}, {id: 'dry', label: 'Dry'}, {id: 'damp', label: 'Damp'},
+            {id: 'wet', label: 'Wet'}, {id: 'soaked', label: 'Soaked'}, {id: 'snow', label: 'Snow'},
+            {id: 'ice', label: 'Ice'}, {id: 'blackIce', label: 'Black ice'}
           ];
+          scope.snowModes = [{id: 'off', label: 'Off'}, {id: 'light', label: 'Light'}, {id: 'heavy', label: 'Heavy'}];
+          scope.compoundOptions = [
+            {id: 'auto', label: 'Auto (from part)'}, {id: 'slick', label: 'Slick'}, {id: 'sport', label: 'Sport'},
+            {id: 'road', label: 'Road'}, {id: 'allTerrain', label: 'All-terrain'}, {id: 'mud', label: 'Mud-terrain'},
+            {id: 'winter', label: 'Winter'}
+          ];
+          scope.compoundPick = {front: 'auto', rear: 'auto'};
+          scope.setCompound = function (axle, id) {
+            lua('playerVehicleCall("setCompound", ' + luaValue(axle) + ', ' + luaValue(id) + ')');
+          };
           scope.ambientPresets = [0, 10, 20, 30, 40];
           scope.factorList = [
             {key: 'temperature', label: 'Temperature'}, {key: 'wear', label: 'Wear'},
             {key: 'pressure', label: 'Pressure'}, {key: 'surface', label: 'Surface'},
-            {key: 'wet', label: 'Wet'}, {key: 'extras', label: 'Extras'}
+            {key: 'wet', label: 'Wet'}, {key: 'snowIce', label: 'Snow / ice'}, {key: 'extras', label: 'Extras'}
           ];
 
           scope.setView = function (v) {
@@ -230,6 +260,20 @@
             if (w < 0.4) return 'Damp ' + Math.round(w * 100) + '%';
             if (w < 0.8) return 'Wet ' + Math.round(w * 100) + '%';
             return 'Soaked';
+          };
+
+          scope.roadLabel = function (d) {
+            d = d || {};
+            const ice = Number(d.ice) || 0, snow = Number(d.snow) || 0;
+            if (ice >= 0.05 && ice >= snow) return 'Ice ' + Math.round(ice * 100) + '%';
+            if (snow >= 0.05) return 'Snow ' + Math.round(snow * 100) + '%';
+            return scope.wetLabel(d.wetness);
+          };
+          scope.roadClass = function (d) {
+            d = d || {};
+            if ((Number(d.ice) || 0) >= 0.05 && (Number(d.ice) || 0) >= (Number(d.snow) || 0)) return 'dyt-chip-ice';
+            if ((Number(d.snow) || 0) >= 0.05) return 'dyt-chip-snow';
+            return (Number(d.wetness) || 0) > 0.05 ? 'dyt-chip-wet' : '';
           };
 
           // Colours ----------------------------------------------------------------------------
@@ -287,7 +331,11 @@
           });
 
           scope.$on('DynamicTyresSettings', function (event, s) {
-            scope.$evalAsync(function () { scope.settings = s || {}; });
+            scope.$evalAsync(function () {
+              scope.settings = s || {};
+              const pc = scope.settings.playerCompounds || {};
+              scope.compoundPick = {front: pc.front || 'auto', rear: pc.rear || 'auto'};
+            });
           });
 
           scope.$on('$destroy', function () {
