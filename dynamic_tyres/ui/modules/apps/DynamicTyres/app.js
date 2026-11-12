@@ -88,7 +88,9 @@
       '</div>' +
 
       // Settings ---------------------------------------------------------------------------------
-      '<div class="dyt-body dyt-settings" ng-if="view === \'settings\'">' +
+      // Rendered only once the settings have arrived: a range input without a value snaps to its
+      // midpoint and would write that back as if the user had moved it.
+      '<div class="dyt-body dyt-settings" ng-if="view === \'settings\' && loaded">' +
         '<div class="dyt-section">Simulation</div>' +
         '<label class="dyt-toggle" ng-repeat="t in toggles track by t.key">' +
           '<input type="checkbox" ng-model="settings[t.key]" ng-change="set(t.key, settings[t.key])">' +
@@ -166,6 +168,7 @@
           scope.data = {wheels: []};
           scope.axles = [];
           scope.settings = {};
+          scope.loaded = false;
           scope.view = store.get('view', 'wheels');
           scope.units = {temp: store.get('tempUnit', 'C'), pressure: store.get('pressureUnit', 'psi')};
 
@@ -333,6 +336,7 @@
           scope.$on('DynamicTyresSettings', function (event, s) {
             scope.$evalAsync(function () {
               scope.settings = s || {};
+              scope.loaded = true;
               const pc = scope.settings.playerCompounds || {};
               scope.compoundPick = {front: pc.front || 'auto', rear: pc.rear || 'auto'};
             });
