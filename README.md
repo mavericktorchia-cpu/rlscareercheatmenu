@@ -40,3 +40,7 @@ Every change goes through RLS's own systems (the money ledger, attributes, the i
 ## Also in this repo: Dynamic Tyres
 
 [`dynamic_tyres/`](dynamic_tyres/) is a separate standalone mod for dynamic tyre temperature, wear, pressure and wet grip, with its own UI app. See its [README](dynamic_tyres/README.md).
+
+## Also in this repo: Cold Start
+
+[`cold_start/`](cold_start/) is a separate standalone mod for realistic cold starts: time to fire, battery drain, slow cranking, diesel glow plugs, flooding and a block heater, with its own UI app. See its [README](cold_start/README.md).

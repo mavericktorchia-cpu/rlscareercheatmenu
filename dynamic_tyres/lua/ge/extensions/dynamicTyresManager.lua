@@ -134,7 +134,10 @@ end
 local function readAmbient()
   if type(settings.ambientOverride) == "number" then return settings.ambientOverride end
   local t = 20
-  if core_environment and core_environment.getTemperatureK then
+  -- The Cold Start mod can override the outside temperature; follow it when it does.
+  if coldStartManager and coldStartManager.isOverridingTemperature and coldStartManager.isOverridingTemperature() then
+    t = tonumber(coldStartManager.getOutsideC()) or t
+  elseif core_environment and core_environment.getTemperatureK then
     local ok, k = pcall(core_environment.getTemperatureK)
     if ok and tonumber(k) and tonumber(k) > 150 then t = tonumber(k) - 273.15 end
   end
