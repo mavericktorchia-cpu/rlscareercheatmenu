@@ -171,8 +171,11 @@ end
 
 -- UI API ---------------------------------------------------------------------------------------------
 
+local failure = nil
+
 function M.requestSettings()
   local s = deepcopy(settings)
+  s.error = failure
   local level = levelTempC()
   s.levelTemp = level and round(level, 1) or nil
   s.overrideAvailable = not overrideBroken
@@ -282,6 +285,30 @@ function M.onClientStartMission()
   overriding = false
   applyOutside()
   forEachVehicle(loadInto)
+end
+
+-- Safety net: an error in here must never become a fatal Lua error. The first one switches the manager
+-- off and is reported in the log and in the UI app.
+local function report()
+  pcall(function() guihooks.trigger("ColdStartSettings", {error = failure, enabled = false}) end)
+end
+for name, fn in pairs(M) do
+  if type(fn) == "function" then
+    M[name] = function(...)
+      if failure then
+        if name == "requestSettings" then report() end
+        return
+      end
+      local res = {xpcall(fn, debug.traceback, ...)}
+      if not res[1] then
+        failure = name .. ": " .. tostring(res[2])
+        pcall(log, "E", "coldStart", failure)
+        report()
+        return
+      end
+      return unpack(res, 2)
+    end
+  end
 end
 
 return M

@@ -916,7 +916,7 @@ end
 
 -- Lifecycle ------------------------------------------------------------------------------------------
 
-function M.updateGFX(dt)
+local function update(dt)
   dt = clamp(tonumber(dt) or 0, 0, 0.1)
   if dt <= 0 then return end
   if engine == nil then findEngine() end
@@ -965,7 +965,7 @@ function M.updateGFX(dt)
 end
 
 -- BeamNG's reset repairs the vehicle and restarts the engine.
-function M.onReset()
+local function reset()
   restoreStarter()
   setFastIdle(0)
   unblockStarter()
@@ -978,6 +978,47 @@ function M.onReset()
   if ctx.engineOffOnReset then st.pendingOff = 3 end
 end
 
+-- Safety net ----------------------------------------------------------------------------------------
+-- An error in here must never take the vehicle's Lua down with it. On the first error the simulation
+-- hands the engine back to the game, switches itself off for this vehicle and reports what went wrong
+-- (in the log and in the UI app).
+
+local failure = nil
+local failureTimer = 0
+
+local function fail(where, err)
+  failure = tostring(where) .. ": " .. tostring(err)
+  pcall(release)
+  if log then pcall(log, "E", "coldStart", failure) end
+end
+
+local function guarded(where, fn)
+  return function(...)
+    if failure then return end
+    local ok, err = xpcall(fn, debug.traceback, ...)
+    if not ok then fail(where, err) end
+  end
+end
+
+function M.updateGFX(dt)
+  if not failure then
+    local ok, err = xpcall(update, debug.traceback, dt)
+    if not ok then fail("updateGFX", err) end
+    return
+  end
+  failureTimer = failureTimer + (tonumber(dt) or 0)
+  if failureTimer >= 0.5 then
+    failureTimer = 0
+    pcall(function()
+      if streams.willSend(STREAM) then gui.send(STREAM, {error = failure, hasEngine = true, enabled = true, active = false}) end
+    end)
+  end
+end
+
+M.onReset = guarded("onReset", reset)
+
+function M.getError() return failure end
+
 function M.onExtensionLoaded()
   st = newState()
   engine = nil
@@ -986,7 +1027,11 @@ function M.onExtensionLoaded()
 end
 
 function M.onExtensionUnloaded()
-  release()
+  pcall(release)
+end
+
+for _, name in ipairs({"setContext", "setVehicleInfo", "coldSoak", "chargeBattery", "setBattery", "setHeater"}) do
+  M[name] = guarded(name, M[name])
 end
 
 return M

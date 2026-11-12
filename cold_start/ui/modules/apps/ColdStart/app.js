@@ -83,7 +83,8 @@
           '<div class="cst-meter" title="Starter motor temperature"><span>Starter</span><div class="cst-bar"><div ng-style="{width: (data.starterHeat * 100) + \'%\', background: data.starterHeat > 0.75 ? \'#ef5350\' : \'#8892a6\'}"></div></div></div>' +
         '</div>' +
 
-        '<div class="cst-hint" ng-class="\'cst-\' + hintTone()">{{ hintText() }}</div>' +
+        '<div class="cst-hint" ng-if="!errorText()" ng-class="\'cst-\' + hintTone()">{{ hintText() }}</div>' +
+        '<div class="cst-error" ng-if="errorText()">Cold Start hit an error and switched itself off. Please report this text:<br>{{ errorText() }}</div>' +
       '</div>' +
 
       // Settings ------------------------------------------------------------------------------------
@@ -299,6 +300,7 @@
           };
           scope.crankBar = function () { return Math.max(3, Math.min(100, (Number(scope.data.crankSpeed) || 0) * 100)); };
 
+          scope.errorText = function () { return scope.data.error || scope.settings.error || ''; };
           scope.hintText = function () {
             const d = scope.data;
             if (!d.hasEngine) return 'This vehicle has no combustion engine.';
@@ -320,7 +322,8 @@
           scope.$on('ColdStartSettings', function (event, s) {
             scope.$evalAsync(function () {
               scope.settings = s || {};
-              scope.loaded = true;
+              scope.loaded = !scope.settings.error;
+              if (scope.settings.error) { scope.view = 'main'; return; }
               const o = scope.settings.outsideOverride;
               scope.slider.outside = (o !== undefined && o !== null) ? o
                 : Math.round(Number(scope.settings.levelTemp !== undefined && scope.settings.levelTemp !== null ? scope.settings.levelTemp : scope.data.outside) || 0);
