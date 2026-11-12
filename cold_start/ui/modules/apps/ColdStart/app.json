@@ -2,7 +2,7 @@
   "name": "Cold Start",
   "description": "Outside and engine temperature, battery charge and how hard the engine will be to start, with settings for the Cold Start simulation.",
   "author": "mavericktorchia",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "directive": "coldStart",
   "domElement": "<cold-start></cold-start>",
   "types": [

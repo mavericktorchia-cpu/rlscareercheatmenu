@@ -130,10 +130,33 @@ local function loadInto(veh)
   veh:queueLuaCommand("if not " .. VEHICLE_EXTENSION .. " then extensions.load('" .. VEHICLE_EXTENSION .. "') end")
 end
 
+-- Model year of a vehicle from its info files (the configuration's own years if it has them).
+local function readModelYear(vehId)
+  local details = core_vehicles.getVehicleDetails(vehId)
+  local years = (type(details.configs) == "table" and details.configs.Years) or (type(details.model) == "table" and details.model.Years)
+  if type(years) ~= "table" then return nil end
+  local lo, hi = tonumber(years.min), tonumber(years.max)
+  if lo and hi then return math.floor((lo + hi) / 2) end
+  return lo or hi
+end
+
+local function infoCommand(vehId)
+  local year
+  if core_vehicles and core_vehicles.getVehicleDetails then
+    local ok, res = pcall(readModelYear, vehId)
+    if ok then year = res end
+  end
+  return "if " .. VEHICLE_EXTENSION .. " and " .. VEHICLE_EXTENSION .. ".setVehicleInfo then " .. VEHICLE_EXTENSION .. ".setVehicleInfo(" .. serialize({year = year}) .. ") end"
+end
+
 -- Called by the vehicle extension when it (re)loads.
 function M.sendContextTo(vehId)
-  local veh = getObjectByID(tonumber(vehId) or -1)
-  if veh then veh:queueLuaCommand(contextCommand()) end
+  vehId = tonumber(vehId) or -1
+  local veh = getObjectByID(vehId)
+  if veh then
+    veh:queueLuaCommand(infoCommand(vehId))
+    veh:queueLuaCommand(contextCommand())
+  end
 end
 
 local function broadcast()

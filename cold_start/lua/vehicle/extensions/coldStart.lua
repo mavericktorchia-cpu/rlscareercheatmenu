@@ -52,6 +52,7 @@ local thermals      -- engine.thermals
 local orig          -- starter values to restore: {starterTorque, invStarterMaxAV}
 local spec          -- {diesel, capAh, volts, iNom, r0, alt}
 local st            -- simulation state, see newState
+local vehInfo = {}   -- from GE: {year = model year or nil}
 local wasPlayer = false
 local gotContext = false
 local telemetryTimer = 0
@@ -97,6 +98,121 @@ local function computeMass()
   return max(mass, 300)
 end
 
+-- Engine profile ------------------------------------------------------------------------------------
+-- Every engine gets its own starting character from what the vehicle is built from:
+--   * fuel system, from the fitted parts (carburetor, throttle-body or port injection) or else the
+--     model year; diesels are old mechanical-pump or modern common-rail by year;
+--   * cylinder count, from the engine's sound setup;
+--   * displacement, estimated from peak torque (the game does not store it);
+--   * battery and starter current, sized for that displacement and the vehicle's weight.
+
+local CARB_WORDS = {"carb", "bbl", "sixpack", "6pack", "sidedraft", "downdraft"}
+local TBI_WORDS = {"tbi"}
+local EFI_WORDS = {"efi", "injection", "_itb", "mpfi", "_di_"}
+
+local function partNames()
+  local names = {}
+  local function add(x) if type(x) == "string" then names[#names + 1] = string.lower(x) end end
+  for _, part in pairs(beamstate and type(beamstate.activeParts) == "table" and beamstate.activeParts or {}) do add(part) end
+  for path, part in pairs(v and v.data and type(v.data.activeParts) == "table" and v.data.activeParts or {}) do add(path); add(part) end
+  return names
+end
+
+local function anyPartHas(names, words)
+  for _, name in ipairs(names) do
+    for _, word in ipairs(words) do
+      if string.find(name, word, 1, true) then return true end
+    end
+  end
+  return false
+end
+
+local function detectFuelSystem(diesel, year)
+  if diesel then
+    return (year and year < 1998) and "mechanical" or "commonrail"
+  end
+  local names = partNames()
+  if anyPartHas(names, TBI_WORDS) then return "tbi" end
+  if anyPartHas(names, EFI_WORDS) then return "efi" end
+  if anyPartHas(names, CARB_WORDS) then return "carb" end
+  if year then
+    if year < 1984 then return "carb" end
+    if year < 1991 then return "tbi" end
+  end
+  return "efi"
+end
+
+local function cylinderCount()
+  local cfg = engine.soundConfiguration
+  local params = type(cfg) == "table" and cfg.engine and cfg.engine.params
+  local coef = params and tonumber(params.fundamentalFrequencyRPMCoef)
+  local n = coef and floor(coef * 120 + 0.5) or nil
+  return (n and n >= 1 and n <= 16) and n or nil
+end
+
+local function hasBoost()
+  local t, sc = engine.turbocharger, engine.supercharger
+  return (type(t) == "table" and t.isExisting == true) or (type(sc) == "table" and sc.isExisting == true)
+end
+
+local function estimateLitres(diesel)
+  local torque = type(engine.torqueData) == "table" and tonumber(engine.torqueData.maxTorque) or tonumber(engine.maxTorque)
+  if not torque or torque <= 0 then return nil end
+  local perLitre = diesel and (hasBoost() and 170 or 70) or (hasBoost() and 150 or 92)
+  return clamp(torque / perLitre, 0.5, 18)
+end
+
+local FUEL_LABELS = {carb = "carburetor", tbi = "throttle-body injection", efi = "fuel injection", mechanical = "mechanical diesel", commonrail = "common-rail diesel"}
+
+local function buildSpec()
+  if not engine then return end
+  local diesel = string.lower(tostring(engine.requiredEnergyType or "")) == "diesel"
+  local mass = computeMass()
+  local year = tonumber(vehInfo.year)
+  local cylinders = cylinderCount()
+  local litres = estimateLitres(diesel)
+  local l = litres or clamp(mass / 700, 1, 6)
+  local fuel = detectFuelSystem(diesel, year)
+
+  local capAh = clamp(35 + 9 * l + mass * 0.006, 40, 120) * (diesel and 1.3 or 1)
+  local volts = 12
+  if diesel and mass > 7000 then capAh, volts = 180, 24 end
+
+  spec = {
+    diesel = diesel, year = year, cylinders = cylinders, litres = litres, fuel = fuel, fuelLabel = FUEL_LABELS[fuel],
+    capAh = capAh,
+    volts = volts,
+    -- Cranking current warm, A (12 V equivalent); never more than the battery is built to give.
+    iNom = min(clamp((90 + 36 * l) * (diesel and 1.5 or 1), 110, 900), capAh * 3.2),
+    r0 = 0.0045 * 60 / capAh,        -- internal resistance warm and full, ohm
+    alt = 70 + capAh * 0.5,          -- alternator output, A
+    tauMul = 1,                      -- cranking time to fire
+    floodMul = 1,                    -- how fast it floods
+    sustainMul = 1,                  -- how likely a catch dies again
+    stumbleMul = 1,                  -- how long it runs rough
+    glowMul = 1,                     -- glow plug time
+    pumpHelps = false,               -- a little throttle while cranking helps (accelerator pump)
+  }
+  if fuel == "carb" then
+    -- Choke and a cold manifold: slow to fire, quick to flood, sulks for a long time.
+    spec.tauMul, spec.floodMul, spec.sustainMul, spec.stumbleMul, spec.pumpHelps = 1.9, 2.2, 1.35, 1.7, true
+  elseif fuel == "tbi" then
+    spec.tauMul, spec.floodMul, spec.sustainMul, spec.stumbleMul = 1.3, 1.3, 1.15, 1.25
+  elseif fuel == "efi" then
+    if year and year >= 2005 then spec.tauMul, spec.floodMul, spec.stumbleMul = 0.85, 0.7, 0.8 end
+  elseif fuel == "mechanical" then
+    -- Indirect injection with slow glow plugs.
+    spec.tauMul, spec.sustainMul, spec.stumbleMul, spec.glowMul = 1.6, 1.2, 1.5, 1.5
+  end
+  -- More cylinders: more chances per turn that one fires, and a smoother catch.
+  if cylinders then
+    spec.tauMul = spec.tauMul * clamp((4 / cylinders) ^ 0.3, 0.8, 1.25)
+    spec.stumbleMul = spec.stumbleMul * clamp((4 / cylinders) ^ 0.3, 0.8, 1.3)
+  end
+  -- Big diesels have a lot of cold iron to heat.
+  if diesel and l > 6 then spec.glowMul = spec.glowMul * 1.3 end
+end
+
 local function findEngine()
   engine, thermals, orig, spec = false, nil, nil, nil
   local list = powertrain and powertrain.getDevicesByCategory and powertrain.getDevicesByCategory("engine") or {}
@@ -111,19 +227,7 @@ local function findEngine()
   thermals = type(engine.thermals) == "table" and engine.thermals or nil
   orig = {starterTorque = engine.starterTorque, invStarterMaxAV = engine.invStarterMaxAV}
 
-  local diesel = string.lower(tostring(engine.requiredEnergyType or "")) == "diesel"
-  local mass = computeMass()
-  local capAh = clamp(38 + mass * 0.016, 40, 110) * (diesel and 1.35 or 1)
-  local volts = 12
-  if diesel and mass > 7000 then capAh, volts = 180, 24 end
-  spec = {
-    diesel = diesel,
-    capAh = capAh,
-    volts = volts,
-    iNom = capAh * 2.6,              -- cranking current of a warm engine, A (12 V equivalent)
-    r0 = 0.0045 * 60 / capAh,        -- internal resistance warm and full, ohm
-    alt = 70 + capAh * 0.5,          -- alternator output, A
-  }
+  buildSpec()
 end
 
 -- Temperatures ---------------------------------------------------------------------------------------
@@ -244,8 +348,8 @@ local function startModel(engineT, crankSpeed)
   end
   local coldG = clamp((5 - chamberT) / 45, 0, 1)
   local floodF = 1 - 0.85 * st.flood ^ 2
-  local sustain = clamp(1 - 0.42 * coldG ^ 1.5 * ctx.difficulty, 0.3, 1)
-  return tau * ctx.difficulty, speedF * floodF, sustain, coldG
+  local sustain = clamp(1 - 0.42 * coldG ^ 1.5 * ctx.difficulty * spec.sustainMul, 0.25, 1)
+  return tau * ctx.difficulty * spec.tauMul, speedF * floodF, sustain, coldG
 end
 
 local function primeTime(engineT)
@@ -376,7 +480,7 @@ end
 
 local function updateGlow(dt, engineT, tb, ignitionOn, cranking)
   if not spec.diesel then return end
-  local needed = clamp(2 + (5 - engineT) * 0.3, 2, 14)
+  local needed = clamp(2 + (5 - engineT) * 0.3, 2, 14) * spec.glowMul
   st.glowNeeded = needed
   if not ignitionOn then
     st.glowTimer = 0
@@ -417,7 +521,7 @@ local function fire(engineT, sustain, coldG)
   st.dieAt = st.catchDur * (0.35 + 0.5 * random())
   st.flick, st.flickVal = 0, 1
   -- How long and how badly it runs rough afterwards.
-  st.stumbleFor = 4 + 22 * coldG
+  st.stumbleFor = (4 + 22 * coldG) * spec.stumbleMul
   st.stumbleStrength = coldG > 0 and (0.35 + 0.65 * coldG) or 0
 end
 
@@ -451,18 +555,24 @@ local function updateCranking(dt, engineT, tb, av, engaged)
   st.crankSpeed = st.crankSpeed + (speed - st.crankSpeed) * min(dt * 6, 1)
   setStarterPitch(clamp(0.6 + 0.4 * st.crankSpeed, 0.6, 1.05))
 
-  local wideOpen = throttleInput() > 0.9
+  local pedal = throttleInput()
+  local wideOpen = pedal > 0.9
+  -- Carburetor: a little throttle works the accelerator pump, which helps a cold engine fire but
+  -- floods it faster.
+  local pumping = spec.pumpHelps and pedal > 0.12 and pedal < 0.7 and engineT < 15
+  st.pumping = pumping
   if not spec.diesel then
     if wideOpen then
       -- Clear-flood: full throttle while cranking cuts the fuel and dries the plugs.
       st.flood = max(0, st.flood - dt * 0.35)
     elseif engineT < 10 then
-      st.flood = min(1, st.flood + dt * 0.03 * coldness(engineT) * ctx.difficulty)
+      st.flood = min(1, st.flood + dt * 0.03 * coldness(engineT) * ctx.difficulty * spec.floodMul * (pumping and 1.8 or 1))
     end
   end
 
   if st.crankTime < primeTime(engineT) then return end
   local tau, rate, sustain, coldG = startModel(engineT, st.crankSpeed)
+  if pumping then rate = rate * 1.7 end
   if rate <= 0 then return end
   if tau <= 0.01 or random() < 1 - exp(-dt * rate / tau) then
     fire(engineT, sustain, coldG)
@@ -683,6 +793,7 @@ local function hintFor(engineT, level)
   if st.phase == "cranking" then
     if st.flood > 0.45 then return "Flooded - hold full throttle while cranking", "warn" end
     if st.crankSpeed < 0.45 and st.crankTime > 0.6 then return "Cranking slowly", "warn" end
+    if spec.pumpHelps and engineT < 10 and not st.pumping and st.crankTime > 2 then return "Carburetor: try a little throttle", "info" end
     return "Cranking...", "info"
   elseif st.phase == "catching" then
     return "It's catching...", "info"
@@ -725,6 +836,12 @@ local function sendTelemetry(active, env, engineT, oilT, tb)
     data.engineTemp = round(engineT, 1)
     data.oilTemp = round(oilT, 1)
     data.diesel = spec.diesel
+    data.fuel = spec.fuel
+    data.fuelLabel = spec.fuelLabel
+    data.cylinders = spec.cylinders
+    data.litres = spec.litres and round(spec.litres, 1) or nil
+    data.year = spec.year
+    data.capAh = round(spec.capAh, 0)
     data.battery = round(st.soc, 3)
     data.volts = round(st.volts * spec.volts / 12, 1)
     data.phase = st.phase
@@ -766,6 +883,13 @@ function M.setContext(newCtx)
     -- The outside temperature was changed: a parked car has been sitting in it.
     st.pendingSoak = 0.4
   end
+end
+
+-- Model year and the like, which only the game engine side knows.
+function M.setVehicleInfo(info)
+  if type(info) ~= "table" then return end
+  vehInfo = info
+  if engine then buildSpec() end
 end
 
 function M.coldSoak()

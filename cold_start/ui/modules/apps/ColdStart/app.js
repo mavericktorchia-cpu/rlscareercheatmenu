@@ -58,7 +58,7 @@
           '</div>' +
 
           '<div class="cst-tile">' +
-            '<div class="cst-label">' + ICONS.engine + '<span>Engine</span><span class="cst-tag" ng-if="data.diesel">diesel</span></div>' +
+            '<div class="cst-label">' + ICONS.engine + '<span>Engine</span><span class="cst-tag" title="{{ engineLine() }}">{{ engineTag() }}</span></div>' +
             '<div class="cst-value" ng-style="{color: tempColor(data.engineTemp)}">{{ data.hasEngine ? fmtTemp(data.engineTemp) : "n/a" }}</div>' +
             '<div class="cst-bar"><div ng-style="{width: warmth(data.engineTemp) + \'%\', background: tempColor(data.engineTemp)}"></div></div>' +
           '</div>' +
@@ -134,6 +134,7 @@
           '<button ng-click="vehicleCall(\'chargeBattery\')">Charge battery</button>' +
           '<button ng-repeat="b in batteryPresets" ng-click="vehicleCall(\'setBattery\', b)">{{ b }}%</button>' +
         '</div>' +
+        '<div class="cst-dim cst-small" ng-if="data.hasEngine">{{ engineLine() }}</div>' +
         '<div class="cst-dim cst-small" ng-if="data.hasEngine">Cold wear so far: +{{ (data.wear || 0).toFixed(1) }}% engine friction. False starts: {{ data.falseStarts || 0 }}.</div>' +
 
         '<div class="cst-section">Units</div>' +
@@ -223,6 +224,24 @@
             if (d.enabled === false) return 'Off';
             const names = {arcade: 'Arcade', realistic: 'Realistic', brutal: 'Brutal'};
             return (names[d.preset] || 'Realistic') + (d.wearOn === false ? ' · no wear' : '');
+          };
+          // What this engine is, which decides how it starts.
+          const FUEL_SHORT = {carb: 'carb', tbi: 'TBI', efi: 'EFI', mechanical: 'diesel', commonrail: 'diesel'};
+          scope.engineTag = function () {
+            const d = scope.data;
+            if (!d.hasEngine || !d.fuel) return '';
+            return (d.cylinders ? d.cylinders + ' cyl \u00b7 ' : '') + (FUEL_SHORT[d.fuel] || '');
+          };
+          scope.engineLine = function () {
+            const d = scope.data;
+            if (!d.hasEngine || !d.fuel) return '';
+            const parts = [];
+            if (d.cylinders) parts.push(d.cylinders + ' cylinders');
+            if (d.litres) parts.push('about ' + Number(d.litres).toFixed(1) + ' L');
+            parts.push(d.fuelLabel || d.fuel);
+            if (d.year) parts.push(String(d.year));
+            if (d.capAh) parts.push(d.capAh + ' Ah battery');
+            return 'Engine: ' + parts.join(', ') + '.';
           };
           scope.outsideSource = function () {
             return scope.hasOverride() ? 'set by you' : 'from level';

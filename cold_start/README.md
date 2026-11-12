@@ -20,6 +20,21 @@ It works on its own in freeroam, scenarios and any career. Written against BeamN
 
 Electric vehicles are left alone. AI drivers always get a normal start.
 
+## Every engine starts differently
+
+The mod works out what each engine is and gives it its own starting character. The app shows what it found (for example "8 cyl · carb"), with the full line in settings.
+
+| What | How it is found | What it changes |
+| --- | --- | --- |
+| **Fuel system** | From the fitted parts (carburetor, throttle-body or port injection). If the parts do not say, from the model year: before 1984 carburetor, before 1991 throttle-body, otherwise injection. | A carburetor takes about twice as long to fire in the cold, floods about twice as fast, dies again more often and runs rough for longer. Throttle-body injection sits in between. Injection from 2005 on is a little better than the baseline. |
+| **Carburetor throttle** | | A little throttle while cranking works the accelerator pump: it fires sooner but floods faster. |
+| **Diesel type** | Model year: before 1998 is an old mechanical-pump diesel, later is common-rail. | Old diesels need about 50% longer on the glow plugs, are slower to fire and run rough for longer. |
+| **Cylinders** | The engine's sound setup. | More cylinders fire sooner and catch more smoothly; a three-cylinder is the roughest. |
+| **Displacement** | Estimated from peak torque, because the game does not store it. | Bigger engines get a bigger battery but pull more starter current, so they sag the voltage more. Diesels over 6 L glow for longer. |
+| **Starter and base start time** | The engine's own values in the game. | A weak starter cranks slower in the cold. |
+
+At −24°C in testing, a 1996 injected four-cylinder started on the first 10-second attempt about 70% of the time and a 1968 carbureted V8 about half the time.
+
 ## Install
 
 1. Build the zip with `./build.sh`, or download `cold_start.zip`.
